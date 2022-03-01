@@ -1,3 +1,4 @@
+//go:build linux
 // +build linux
 
 package disk
@@ -287,6 +288,18 @@ func PartitionsWithContext(ctx context.Context, all bool) ([]PartitionStat, erro
 			fields = strings.Fields(parts[1])
 			fstype := fields[0]
 			device := fields[1]
+
+			// https://man7.org/linux/man-pages/man2/mount.2.html
+			// Since Linux 2.6.16, MS_RDONLY can be set or cleared on a per-mount-
+			// point basis as well as on the underlying filesystem superblock. The
+			// mounted filesystem will be writable only if neither the filesystem nor
+			// the mountpoint are flagged as read-only.
+			if len(fields) >= 3 {
+				if len(mountOpts) > 0 {
+					mountOpts += ","
+				}
+				mountOpts += fields[2]
+			}
 
 			d = PartitionStat{
 				Device:     device,
