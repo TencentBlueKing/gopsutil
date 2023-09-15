@@ -216,7 +216,7 @@ func IOCountersWithContext(ctx context.Context, names ...string) (map[string]IOC
 			var diskPerformanceSize uint32
 			err = windows.DeviceIoControl(h, IOCTL_DISK_PERFORMANCE, nil, 0, (*byte)(unsafe.Pointer(&diskPerformance)), uint32(unsafe.Sizeof(diskPerformance)), &diskPerformanceSize, nil)
 			if err != nil {
-				return drivemap, err
+				continue
 			}
 			drivemap[path] = IOCountersStat{
 				ReadBytes:  uint64(diskPerformance.BytesRead),

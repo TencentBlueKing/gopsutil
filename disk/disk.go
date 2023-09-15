@@ -32,6 +32,8 @@ type PartitionStat struct {
 }
 
 type IOCountersStat struct {
+	Major            uint64 `json:"major"`
+	Minor            uint64 `json:"minor"`
 	ReadCount        uint64 `json:"readCount"`
 	MergedReadCount  uint64 `json:"mergedReadCount"`
 	WriteCount       uint64 `json:"writeCount"`
