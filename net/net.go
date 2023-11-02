@@ -59,7 +59,7 @@ type InterfaceStat struct {
 	Index        int               `json:"index"`
 	MTU          int               `json:"mtu"`          // maximum transmission unit
 	Name         string            `json:"name"`         // e.g., "en0", "lo0", "eth0.100"
-	HardwareAddr string            `json:"hardwareAddr"` // IEEE MAC-48, EUI-48 and EUI-64 form
+	HardwareAddr string            `json:"hardwareaddr"` // IEEE MAC-48, EUI-48 and EUI-64 form
 	Flags        []string          `json:"flags"`        // e.g., FlagUp, FlagLoopback, FlagMulticast
 	Addrs        InterfaceAddrList `json:"addrs"`
 }
