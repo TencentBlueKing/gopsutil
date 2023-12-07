@@ -87,7 +87,6 @@ func PartitionsWithContext(ctx context.Context, all bool) ([]PartitionStat, erro
 		Verbose: true,
 	}
 
-	var errLogicalDrives error
 	retChan := make(chan PartitionStat)
 	quitChan := make(chan struct{})
 	defer close(quitChan)
@@ -97,11 +96,10 @@ func PartitionsWithContext(ctx context.Context, all bool) ([]PartitionStat, erro
 
 		lpBuffer := make([]byte, 254)
 
-		diskret, _, err := procGetLogicalDriveStringsW.Call(
+		diskret, _, _ := procGetLogicalDriveStringsW.Call(
 			uintptr(len(lpBuffer)),
 			uintptr(unsafe.Pointer(&lpBuffer[0])))
 		if diskret == 0 {
-			errLogicalDrives = err
 			return
 		}
 		for _, v := range lpBuffer {
@@ -169,10 +167,7 @@ func PartitionsWithContext(ctx context.Context, all bool) ([]PartitionStat, erro
 		select {
 		case p, ok := <-retChan:
 			if !ok {
-				if errLogicalDrives != nil {
-					return ret, errLogicalDrives
-				}
-				return ret, warnings.Reference()
+				return ret, nil
 			}
 			ret = append(ret, p)
 		case <-ctx.Done():
