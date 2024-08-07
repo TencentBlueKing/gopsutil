@@ -229,6 +229,12 @@ func PlatformInformationWithContext(ctx context.Context) (platform string, famil
 			version = getRedhatishVersion(contents)
 			platform = getRedhatishPlatform(contents)
 		}
+	} else if common.PathExists(common.HostEtcWithContext(ctx, "kylin-release")) {
+		contents, err := common.ReadLines(common.HostEtcWithContext(ctx, "kylin-release"))
+		if err == nil {
+			version = getRedhatishVersion(contents)
+			platform = getRedhatishPlatform(contents)
+		}
 	} else if common.PathExists(common.HostEtcWithContext(ctx, "redhat-release")) {
 		contents, err := common.ReadLines(common.HostEtcWithContext(ctx, "redhat-release"))
 		if err == nil {
