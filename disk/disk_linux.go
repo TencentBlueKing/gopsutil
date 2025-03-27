@@ -333,7 +333,9 @@ func PartitionsWithContext(ctx context.Context, all bool) ([]PartitionStat, erro
 			// point basis as well as on the underlying filesystem superblock. The
 			// mounted filesystem will be writable only if neither the filesystem nor
 			// the mountpoint are flagged as read-only.
-			mountOpts = append(mountOpts, blockDeviceID)
+			if len(fields) >= 3 {
+				mountOpts = append(mountOpts, strings.Split(fields[2], ",")...)
+			}
 
 			d = PartitionStat{
 				Device:     device,
