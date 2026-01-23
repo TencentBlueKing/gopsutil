@@ -235,6 +235,13 @@ func PlatformInformationWithContext(ctx context.Context) (platform string, famil
 			version = getKylinVersion(contents)
 			platform = getRedhatishPlatform(contents)
 		}
+	} else if common.PathExists(common.HostEtcWithContext(ctx, "redflag-release")) {
+		contents, err := common.ReadLines(common.HostEtcWithContext(ctx, "redflag-release"))
+		if err == nil {
+			version = getRedFlagReleaseVersion(contents)
+			platform = getRedFlagPlatform(contents)
+		}
+
 	} else if common.PathExists(common.HostEtcWithContext(ctx, "redhat-release")) {
 		contents, err := common.ReadLines(common.HostEtcWithContext(ctx, "redhat-release"))
 		if err == nil {
@@ -321,6 +328,8 @@ func PlatformInformationWithContext(ctx context.Context) (platform string, famil
 		family = "neokylin"
 	case "kylin":
 		family = "kylin"
+	case "redflag":
+		family = "redflag"
 	}
 
 	return platform, family, version, nil
@@ -348,6 +357,29 @@ func getKylinVersion(contents []string) string {
 		return matches[1]
 	}
 
+	return ""
+}
+
+func getRedFlagReleaseVersion(contents []string) string {
+	if len(contents) == 0 {
+		return ""
+	}
+	re := regexp.MustCompile(`release\s+([\d.]+)`)
+	matches := re.FindStringSubmatch(contents[0])
+	if len(matches) > 1 {
+		return matches[1]
+	}
+	return ""
+}
+
+func getRedFlagPlatform(contents []string) string {
+	if len(contents) == 0 {
+		return ""
+	}
+	c := strings.ToLower(contents[0])
+	if strings.Contains(c, "redflag") {
+		return "redflag"
+	}
 	return ""
 }
 
