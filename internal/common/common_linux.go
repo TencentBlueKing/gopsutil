@@ -56,7 +56,20 @@ func NumProcsWithContext(ctx context.Context) (uint64, error) {
 	return cnt, nil
 }
 
+var (
+	cachedBootTimeMap   = map[string]uint64{}
+	cachedBootTimeMutex sync.RWMutex
+)
+
 func BootTimeWithContext(ctx context.Context) (uint64, error) {
+	procRoot := HostProcWithContext(ctx)
+	cachedBootTimeMutex.RLock()
+	if cached, ok := cachedBootTimeMap[procRoot]; ok {
+		cachedBootTimeMutex.RUnlock()
+		return cached, nil
+	}
+	cachedBootTimeMutex.RUnlock()
+
 	system, role, err := VirtualizationWithContext(ctx)
 	if err != nil {
 		return 0, err
@@ -82,7 +95,11 @@ func BootTimeWithContext(ctx context.Context) (uint64, error) {
 
 		currentTime := time.Now().UnixNano() / int64(time.Second)
 		t := currentTime - int64(info.Uptime)
-		return uint64(t), nil
+		bootTime := uint64(t)
+		cachedBootTimeMutex.Lock()
+		cachedBootTimeMap[procRoot] = bootTime
+		cachedBootTimeMutex.Unlock()
+		return bootTime, nil
 	}
 	if err != nil {
 		return 0, err
@@ -99,8 +116,11 @@ func BootTimeWithContext(ctx context.Context) (uint64, error) {
 				if err != nil {
 					return 0, err
 				}
-				t := uint64(b)
-				return t, nil
+				bootTime := uint64(b)
+				cachedBootTimeMutex.Lock()
+				cachedBootTimeMap[procRoot] = bootTime
+				cachedBootTimeMutex.Unlock()
+				return bootTime, nil
 			}
 		}
 	} else if statFile == "uptime" {
@@ -113,8 +133,11 @@ func BootTimeWithContext(ctx context.Context) (uint64, error) {
 			return 0, err
 		}
 		currentTime := float64(time.Now().UnixNano()) / float64(time.Second)
-		t := currentTime - b
-		return uint64(t), nil
+		bootTime := uint64(currentTime - b)
+		cachedBootTimeMutex.Lock()
+		cachedBootTimeMap[procRoot] = bootTime
+		cachedBootTimeMutex.Unlock()
+		return bootTime, nil
 	}
 
 	return 0, fmt.Errorf("could not find btime")

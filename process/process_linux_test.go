@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -131,6 +133,200 @@ func Test_fillFromStatusWithContext(t *testing.T) {
 		p, _ := NewProcess(int32(pid))
 		if err := p.fillFromStatus(); err != nil {
 			t.Error(err)
+		}
+	}
+}
+
+func TestStatusCachesStaticFieldsOnly(t *testing.T) {
+	t.Setenv("HOST_PROC", "testdata/linux")
+	p := &Process{Pid: 1060}
+
+	if err := p.fillFromStatusStaticWithContext(context.Background()); err != nil {
+		t.Fatalf("fillFromStatusStaticWithContext failed: %v", err)
+	}
+	p.statusMutex.RLock()
+	if !p.statusMetaFilled {
+		p.statusMutex.RUnlock()
+		t.Fatal("expected status metadata to be cached after fillFromStatusStaticWithContext")
+	}
+	if len(p.uids) == 0 {
+		p.statusMutex.RUnlock()
+		t.Fatal("expected uids to be cached after fillFromStatusStaticWithContext")
+	}
+	if len(p.gids) == 0 {
+		p.statusMutex.RUnlock()
+		t.Fatal("expected gids to be cached after fillFromStatusStaticWithContext")
+	}
+	if p.tgid == 0 {
+		p.statusMutex.RUnlock()
+		t.Fatal("expected tgid to be cached after fillFromStatusStaticWithContext")
+	}
+	if p.name == "" {
+		p.statusMutex.RUnlock()
+		t.Fatal("expected name to be cached after fillFromStatusStaticWithContext")
+	}
+	p.statusMutex.RUnlock()
+
+	status, err := p.StatusWithContext(context.Background())
+	if err != nil {
+		t.Fatalf("StatusWithContext failed: %v", err)
+	}
+	if len(status) == 0 || status[0] == "" {
+		t.Fatal("expected dynamic status to remain available after StatusWithContext")
+	}
+}
+
+func TestCmdlineCachesResult(t *testing.T) {
+	procDir, err := ioutil.TempDir("", "gopsutil-proc-")
+	if err != nil {
+		t.Fatalf("TempDir failed: %v", err)
+	}
+	defer os.RemoveAll(procDir)
+
+	t.Setenv("HOST_PROC", procDir)
+	pidDir := filepath.Join(procDir, "1060")
+	if err := os.MkdirAll(pidDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pidDir, "cmdline"), []byte("/usr/bin/server\x00--flag\x00"), 0o644); err != nil {
+		t.Fatalf("WriteFile cmdline failed: %v", err)
+	}
+	p := &Process{Pid: 1060}
+
+	cmd, err := p.CmdlineWithContext(context.Background())
+	if err != nil {
+		t.Fatalf("CmdlineWithContext failed: %v", err)
+	}
+	p.cmdlineMutex.RLock()
+	if !p.cmdlineFilled {
+		p.cmdlineMutex.RUnlock()
+		t.Fatal("expected cmdline to be cached")
+	}
+	p.cmdlineMutex.RUnlock()
+	if cmd == "" {
+		t.Fatal("expected cmdline to be non-empty")
+	}
+
+	p.cmdlineMutex.Lock()
+	originalCmdline := p.cmdline
+	originalSlice := append([]string(nil), p.cmdlineSlice...)
+	p.cmdline = "cached cmdline"
+	p.cmdlineSlice = []string{"cached", "slice"}
+	p.cmdlineMutex.Unlock()
+
+	cmd2, err := p.CmdlineWithContext(context.Background())
+	if err != nil {
+		t.Fatalf("second CmdlineWithContext failed: %v", err)
+	}
+	if cmd2 != "cached cmdline" {
+		t.Fatalf("expected cached cmdline, got %q", cmd2)
+	}
+
+	slice, err := p.CmdlineSliceWithContext(context.Background())
+	if err != nil {
+		t.Fatalf("CmdlineSliceWithContext failed: %v", err)
+	}
+	assert.Equal(t, []string{"cached", "slice"}, slice)
+
+	p.cmdlineMutex.Lock()
+	p.cmdline = originalCmdline
+	p.cmdlineSlice = originalSlice
+	p.cmdlineMutex.Unlock()
+}
+
+func TestCmdlineCacheConcurrentAccess(t *testing.T) {
+	procDir, err := ioutil.TempDir("", "gopsutil-proc-")
+	if err != nil {
+		t.Fatalf("TempDir failed: %v", err)
+	}
+	defer os.RemoveAll(procDir)
+
+	t.Setenv("HOST_PROC", procDir)
+	pidDir := filepath.Join(procDir, "1060")
+	if err := os.MkdirAll(pidDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pidDir, "cmdline"), []byte("/usr/bin/server\x00--flag\x00"), 0o644); err != nil {
+		t.Fatalf("WriteFile cmdline failed: %v", err)
+	}
+	p := &Process{Pid: 1060}
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, 64)
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 20; j++ {
+				if _, err := p.CmdlineWithContext(context.Background()); err != nil {
+					errCh <- err
+					return
+				}
+				slice, err := p.CmdlineSliceWithContext(context.Background())
+				if err != nil {
+					errCh <- err
+					return
+				}
+				if len(slice) == 0 {
+					errCh <- fmt.Errorf("expected cmdline slice to be non-empty")
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestStatusStaticCacheConcurrentAccess(t *testing.T) {
+	t.Setenv("HOST_PROC", "testdata/linux")
+	p := &Process{Pid: 1060}
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, 64)
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 20; j++ {
+				status, err := p.StatusWithContext(context.Background())
+				if err != nil {
+					errCh <- err
+					return
+				}
+				if len(status) == 0 || status[0] == "" {
+					errCh <- fmt.Errorf("expected status to be non-empty")
+					return
+				}
+				if _, err := p.UidsWithContext(context.Background()); err != nil {
+					errCh <- err
+					return
+				}
+				if _, err := p.GidsWithContext(context.Background()); err != nil {
+					errCh <- err
+					return
+				}
+				if _, err := p.GroupsWithContext(context.Background()); err != nil {
+					errCh <- err
+					return
+				}
+				if _, err := p.TgidWithContext(context.Background()); err != nil {
+					errCh <- err
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			t.Fatal(err)
 		}
 	}
 }

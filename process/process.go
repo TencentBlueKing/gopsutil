@@ -23,19 +23,25 @@ var (
 )
 
 type Process struct {
-	Pid            int32 `json:"pid"`
-	name           string
-	status         string
-	parent         int32
-	parentMutex    sync.RWMutex // for windows ppid cache
-	numCtxSwitches *NumCtxSwitchesStat
-	uids           []int32
-	gids           []int32
-	groups         []int32
-	numThreads     int32
-	memInfo        *MemoryInfoStat
-	sigInfo        *SignalInfoStat
-	createTime     int64
+	Pid              int32 `json:"pid"`
+	statusMutex      sync.RWMutex
+	name             string
+	status           string
+	statusMetaFilled bool // caches selected process identity metadata parsed from /proc/<pid>/status
+	parent           int32
+	parentMutex      sync.RWMutex // for windows ppid cache
+	numCtxSwitches   *NumCtxSwitchesStat
+	uids             []int32
+	gids             []int32
+	groups           []int32
+	numThreads       int32
+	memInfo          *MemoryInfoStat
+	sigInfo          *SignalInfoStat
+	createTime       int64
+	cmdlineMutex     sync.RWMutex
+	cmdlineFilled    bool
+	cmdline          string
+	cmdlineSlice     []string
 
 	lastCPUTimes *cpu.TimesStat
 	lastCPUTime  time.Time
