@@ -74,6 +74,20 @@ func (m MemoryMapsStat) String() string {
 	return string(s)
 }
 
+type processStatusData struct {
+	name           string
+	status         string
+	parent         int32
+	tgid           int32
+	uids           []int32
+	gids           []int32
+	groups         []int32
+	numThreads     int32
+	numCtxSwitches *NumCtxSwitchesStat
+	memInfo        *MemoryInfoStat
+	sigInfo        *SignalInfoStat
+}
+
 func (p *Process) PpidWithContext(ctx context.Context) (int32, error) {
 	_, ppid, _, _, _, _, _, err := p.fillFromStatWithContext(ctx)
 	if err != nil {
@@ -83,21 +97,28 @@ func (p *Process) PpidWithContext(ctx context.Context) (int32, error) {
 }
 
 func (p *Process) NameWithContext(ctx context.Context) (string, error) {
-	if p.name == "" {
+	p.statusMutex.RLock()
+	name := p.name
+	p.statusMutex.RUnlock()
+	if name == "" {
 		if err := p.fillNameWithContext(ctx); err != nil {
 			return "", err
 		}
+		p.statusMutex.RLock()
+		name = p.name
+		p.statusMutex.RUnlock()
 	}
-	return p.name, nil
+	return name, nil
 }
 
 func (p *Process) TgidWithContext(ctx context.Context) (int32, error) {
-	if p.tgid == 0 {
-		if err := p.fillFromStatusWithContext(ctx); err != nil {
-			return 0, err
-		}
+	if err := p.fillFromStatusStaticWithContext(ctx); err != nil {
+		return 0, err
 	}
-	return p.tgid, nil
+	p.statusMutex.RLock()
+	tgid := p.tgid
+	p.statusMutex.RUnlock()
+	return tgid, nil
 }
 
 func (p *Process) ExeWithContext(ctx context.Context) (string, error) {
@@ -105,11 +126,24 @@ func (p *Process) ExeWithContext(ctx context.Context) (string, error) {
 }
 
 func (p *Process) CmdlineWithContext(ctx context.Context) (string, error) {
-	return p.fillFromCmdlineWithContext(ctx)
+	if err := p.fillCmdlineWithContext(ctx); err != nil {
+		return "", err
+	}
+	p.cmdlineMutex.RLock()
+	cmdline := p.cmdline
+	p.cmdlineMutex.RUnlock()
+	return cmdline, nil
 }
 
 func (p *Process) CmdlineSliceWithContext(ctx context.Context) ([]string, error) {
-	return p.fillSliceFromCmdlineWithContext(ctx)
+	if err := p.fillCmdlineWithContext(ctx); err != nil {
+		return nil, err
+	}
+	p.cmdlineMutex.RLock()
+	ret := make([]string, len(p.cmdlineSlice))
+	copy(ret, p.cmdlineSlice)
+	p.cmdlineMutex.RUnlock()
+	return ret, nil
 }
 
 func (p *Process) createTimeWithContext(ctx context.Context) (int64, error) {
@@ -125,11 +159,13 @@ func (p *Process) CwdWithContext(ctx context.Context) (string, error) {
 }
 
 func (p *Process) StatusWithContext(ctx context.Context) ([]string, error) {
-	err := p.fillFromStatusWithContext(ctx)
-	if err != nil {
+	if err := p.fillFromStatusWithContext(ctx); err != nil {
 		return []string{""}, err
 	}
-	return []string{p.status}, nil
+	p.statusMutex.RLock()
+	status := p.status
+	p.statusMutex.RUnlock()
+	return []string{status}, nil
 }
 
 func (p *Process) ForegroundWithContext(ctx context.Context) (bool, error) {
@@ -150,27 +186,36 @@ func (p *Process) ForegroundWithContext(ctx context.Context) (bool, error) {
 }
 
 func (p *Process) UidsWithContext(ctx context.Context) ([]int32, error) {
-	err := p.fillFromStatusWithContext(ctx)
+	err := p.fillFromStatusStaticWithContext(ctx)
 	if err != nil {
 		return []int32{}, err
 	}
-	return p.uids, nil
+	p.statusMutex.RLock()
+	uids := append([]int32(nil), p.uids...)
+	p.statusMutex.RUnlock()
+	return uids, nil
 }
 
 func (p *Process) GidsWithContext(ctx context.Context) ([]int32, error) {
-	err := p.fillFromStatusWithContext(ctx)
+	err := p.fillFromStatusStaticWithContext(ctx)
 	if err != nil {
 		return []int32{}, err
 	}
-	return p.gids, nil
+	p.statusMutex.RLock()
+	gids := append([]int32(nil), p.gids...)
+	p.statusMutex.RUnlock()
+	return gids, nil
 }
 
 func (p *Process) GroupsWithContext(ctx context.Context) ([]int32, error) {
-	err := p.fillFromStatusWithContext(ctx)
+	err := p.fillFromStatusStaticWithContext(ctx)
 	if err != nil {
 		return []int32{}, err
 	}
-	return p.groups, nil
+	p.statusMutex.RLock()
+	groups := append([]int32(nil), p.groups...)
+	p.statusMutex.RUnlock()
+	return groups, nil
 }
 
 func (p *Process) TerminalWithContext(ctx context.Context) (string, error) {
@@ -665,40 +710,55 @@ func (p *Process) fillFromExeWithContext(ctx context.Context) (string, error) {
 }
 
 // Get cmdline from /proc/(pid)/cmdline
-func (p *Process) fillFromCmdlineWithContext(ctx context.Context) (string, error) {
+func (p *Process) fillCmdlineWithContext(ctx context.Context) error {
+	p.cmdlineMutex.RLock()
+	if p.cmdlineFilled {
+		p.cmdlineMutex.RUnlock()
+		return nil
+	}
+	p.cmdlineMutex.RUnlock()
 	pid := p.Pid
 	cmdPath := common.HostProcWithContext(ctx, strconv.Itoa(int(pid)), "cmdline")
 	cmdline, err := ioutil.ReadFile(cmdPath)
 	if err != nil {
-		return "", err
+		return err
 	}
+	cmdlineString := ""
+	var cmdlineSlice []string
+	if len(cmdline) == 0 {
+		p.cmdlineMutex.Lock()
+		if !p.cmdlineFilled {
+			p.cmdline = ""
+			p.cmdlineSlice = nil
+			p.cmdlineFilled = true
+		}
+		p.cmdlineMutex.Unlock()
+		return nil
+	}
+
 	ret := strings.FieldsFunc(string(cmdline), func(r rune) bool {
 		return r == '\u0000'
 	})
-
-	return strings.Join(ret, " "), nil
-}
-
-func (p *Process) fillSliceFromCmdlineWithContext(ctx context.Context) ([]string, error) {
-	pid := p.Pid
-	cmdPath := common.HostProcWithContext(ctx, strconv.Itoa(int(pid)), "cmdline")
-	cmdline, err := ioutil.ReadFile(cmdPath)
-	if err != nil {
-		return nil, err
-	}
-	if len(cmdline) == 0 {
-		return nil, nil
-	}
+	cmdlineString = strings.Join(ret, " ")
 
 	cmdline = bytes.TrimRight(cmdline, "\x00")
 
 	parts := bytes.Split(cmdline, []byte{0})
-	var strParts []string
+	strParts := make([]string, 0, len(parts))
 	for _, p := range parts {
 		strParts = append(strParts, string(p))
 	}
+	cmdlineSlice = strParts
 
-	return strParts, nil
+	p.cmdlineMutex.Lock()
+	if !p.cmdlineFilled {
+		p.cmdline = cmdlineString
+		p.cmdlineSlice = cmdlineSlice
+		p.cmdlineFilled = true
+	}
+	p.cmdlineMutex.Unlock()
+
+	return nil
 }
 
 // Get IO status from /proc/(pid)/io
@@ -792,10 +852,24 @@ func (p *Process) fillFromStatmWithContext(ctx context.Context) (*MemoryInfoStat
 // Get name from /proc/(pid)/comm or /proc/(pid)/status
 func (p *Process) fillNameWithContext(ctx context.Context) error {
 	err := p.fillFromCommWithContext(ctx)
-	if err == nil && p.name != "" && len(p.name) < 15 {
-		return nil
+	if err == nil {
+		p.statusMutex.RLock()
+		name := p.name
+		p.statusMutex.RUnlock()
+		if name != "" && len(name) < 15 {
+			return nil
+		}
 	}
-	return p.fillFromStatusWithContext(ctx)
+	if err := p.fillFromStatusStaticWithContext(ctx); err != nil {
+		return err
+	}
+	p.statusMutex.RLock()
+	name := p.name
+	p.statusMutex.RUnlock()
+	if name == "" {
+		return p.fillFromStatusWithContext(ctx)
+	}
+	return nil
 }
 
 // Get name from /proc/(pid)/comm
@@ -807,7 +881,9 @@ func (p *Process) fillFromCommWithContext(ctx context.Context) error {
 		return err
 	}
 
+	p.statusMutex.Lock()
 	p.name = strings.TrimSuffix(string(contents), "\n")
+	p.statusMutex.Unlock()
 	return nil
 }
 
@@ -815,18 +891,42 @@ func (p *Process) fillFromCommWithContext(ctx context.Context) error {
 func (p *Process) fillFromStatus() error {
 	return p.fillFromStatusWithContext(context.Background())
 }
-
 func (p *Process) fillFromStatusWithContext(ctx context.Context) error {
+	data, err := p.readStatusWithContext(ctx, false)
+	if err != nil {
+		return err
+	}
+
+	p.statusMutex.Lock()
+	p.name = data.name
+	p.status = data.status
+	p.parent = data.parent
+	p.tgid = data.tgid
+	p.uids = data.uids
+	p.gids = data.gids
+	p.groups = data.groups
+	p.numThreads = data.numThreads
+	p.numCtxSwitches = data.numCtxSwitches
+	p.memInfo = data.memInfo
+	p.sigInfo = data.sigInfo
+	p.statusMutex.Unlock()
+	return nil
+}
+
+func (p *Process) readStatusWithContext(ctx context.Context, staticOnly bool) (*processStatusData, error) {
 	pid := p.Pid
 	statPath := common.HostProcWithContext(ctx, strconv.Itoa(int(pid)), "status")
 	contents, err := ioutil.ReadFile(statPath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	lines := strings.Split(string(contents), "\n")
-	p.numCtxSwitches = &NumCtxSwitchesStat{}
-	p.memInfo = &MemoryInfoStat{}
-	p.sigInfo = &SignalInfoStat{}
+	data := &processStatusData{}
+	if !staticOnly {
+		data.numCtxSwitches = &NumCtxSwitchesStat{}
+		data.memInfo = &MemoryInfoStat{}
+		data.sigInfo = &SignalInfoStat{}
+	}
 	for _, line := range lines {
 		tabParts := strings.SplitN(line, "\t", 2)
 		if len(tabParts) < 2 {
@@ -835,180 +935,254 @@ func (p *Process) fillFromStatusWithContext(ctx context.Context) error {
 		value := tabParts[1]
 		switch strings.TrimRight(tabParts[0], ":") {
 		case "Name":
-			p.name = strings.Trim(value, " \t")
-			if len(p.name) >= 15 {
+			data.name = strings.Trim(value, " \t")
+			if len(data.name) >= 15 {
 				cmdlineSlice, err := p.CmdlineSliceWithContext(ctx)
 				if err != nil {
-					return err
+					return nil, err
 				}
 				if len(cmdlineSlice) > 0 {
 					extendedName := filepath.Base(cmdlineSlice[0])
-					if strings.HasPrefix(extendedName, p.name) {
-						p.name = extendedName
+					if strings.HasPrefix(extendedName, data.name) {
+						data.name = extendedName
 					}
 				}
 			}
-			// Ensure we have a copy and not reference into slice
-			p.name = string([]byte(p.name))
+			data.name = string([]byte(data.name))
 		case "State":
-			p.status = convertStatusChar(value[0:1])
-			// Ensure we have a copy and not reference into slice
-			p.status = string([]byte(p.status))
+			if staticOnly {
+				continue
+			}
+			data.status = convertStatusChar(value[0:1])
+			data.status = string([]byte(data.status))
 		case "PPid", "Ppid":
+			if staticOnly {
+				continue
+			}
 			pval, err := strconv.ParseInt(value, 10, 32)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			p.parent = int32(pval)
+			data.parent = int32(pval)
 		case "Tgid":
 			pval, err := strconv.ParseInt(value, 10, 32)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			p.tgid = int32(pval)
+			data.tgid = int32(pval)
 		case "Uid":
-			p.uids = make([]int32, 0, 4)
+			data.uids = make([]int32, 0, 4)
 			for _, i := range strings.Split(value, "\t") {
 				v, err := strconv.ParseInt(i, 10, 32)
 				if err != nil {
-					return err
+					return nil, err
 				}
-				p.uids = append(p.uids, int32(v))
+				data.uids = append(data.uids, int32(v))
 			}
 		case "Gid":
-			p.gids = make([]int32, 0, 4)
+			data.gids = make([]int32, 0, 4)
 			for _, i := range strings.Split(value, "\t") {
 				v, err := strconv.ParseInt(i, 10, 32)
 				if err != nil {
-					return err
+					return nil, err
 				}
-				p.gids = append(p.gids, int32(v))
+				data.gids = append(data.gids, int32(v))
 			}
 		case "Groups":
 			groups := strings.Fields(value)
-			p.groups = make([]int32, 0, len(groups))
+			data.groups = make([]int32, 0, len(groups))
 			for _, i := range groups {
 				v, err := strconv.ParseInt(i, 10, 32)
 				if err != nil {
-					return err
+					return nil, err
 				}
-				p.groups = append(p.groups, int32(v))
+				data.groups = append(data.groups, int32(v))
 			}
 		case "Threads":
+			if staticOnly {
+				continue
+			}
 			v, err := strconv.ParseInt(value, 10, 32)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			p.numThreads = int32(v)
+			data.numThreads = int32(v)
 		case "voluntary_ctxt_switches":
+			if staticOnly {
+				continue
+			}
 			v, err := strconv.ParseInt(value, 10, 64)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			p.numCtxSwitches.Voluntary = v
+			data.numCtxSwitches.Voluntary = v
 		case "nonvoluntary_ctxt_switches":
+			if staticOnly {
+				continue
+			}
 			v, err := strconv.ParseInt(value, 10, 64)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			p.numCtxSwitches.Involuntary = v
+			data.numCtxSwitches.Involuntary = v
 		case "VmRSS":
+			if staticOnly {
+				continue
+			}
 			value := strings.Trim(value, " kB") // remove last "kB"
 			v, err := strconv.ParseUint(value, 10, 64)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			p.memInfo.RSS = v * 1024
+			data.memInfo.RSS = v * 1024
 		case "VmSize":
+			if staticOnly {
+				continue
+			}
 			value := strings.Trim(value, " kB") // remove last "kB"
 			v, err := strconv.ParseUint(value, 10, 64)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			p.memInfo.VMS = v * 1024
+			data.memInfo.VMS = v * 1024
 		case "VmSwap":
+			if staticOnly {
+				continue
+			}
 			value := strings.Trim(value, " kB") // remove last "kB"
 			v, err := strconv.ParseUint(value, 10, 64)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			p.memInfo.Swap = v * 1024
+			data.memInfo.Swap = v * 1024
 		case "VmHWM":
+			if staticOnly {
+				continue
+			}
 			value := strings.Trim(value, " kB") // remove last "kB"
 			v, err := strconv.ParseUint(value, 10, 64)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			p.memInfo.HWM = v * 1024
+			data.memInfo.HWM = v * 1024
 		case "VmData":
+			if staticOnly {
+				continue
+			}
 			value := strings.Trim(value, " kB") // remove last "kB"
 			v, err := strconv.ParseUint(value, 10, 64)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			p.memInfo.Data = v * 1024
+			data.memInfo.Data = v * 1024
 		case "VmStk":
+			if staticOnly {
+				continue
+			}
 			value := strings.Trim(value, " kB") // remove last "kB"
 			v, err := strconv.ParseUint(value, 10, 64)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			p.memInfo.Stack = v * 1024
+			data.memInfo.Stack = v * 1024
 		case "VmLck":
+			if staticOnly {
+				continue
+			}
 			value := strings.Trim(value, " kB") // remove last "kB"
 			v, err := strconv.ParseUint(value, 10, 64)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			p.memInfo.Locked = v * 1024
+			data.memInfo.Locked = v * 1024
 		case "SigPnd":
+			if staticOnly {
+				continue
+			}
 			if len(value) > 16 {
 				value = value[len(value)-16:]
 			}
 			v, err := strconv.ParseUint(value, 16, 64)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			p.sigInfo.PendingThread = v
+			data.sigInfo.PendingThread = v
 		case "ShdPnd":
+			if staticOnly {
+				continue
+			}
 			if len(value) > 16 {
 				value = value[len(value)-16:]
 			}
 			v, err := strconv.ParseUint(value, 16, 64)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			p.sigInfo.PendingProcess = v
+			data.sigInfo.PendingProcess = v
 		case "SigBlk":
+			if staticOnly {
+				continue
+			}
 			if len(value) > 16 {
 				value = value[len(value)-16:]
 			}
 			v, err := strconv.ParseUint(value, 16, 64)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			p.sigInfo.Blocked = v
+			data.sigInfo.Blocked = v
 		case "SigIgn":
+			if staticOnly {
+				continue
+			}
 			if len(value) > 16 {
 				value = value[len(value)-16:]
 			}
 			v, err := strconv.ParseUint(value, 16, 64)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			p.sigInfo.Ignored = v
+			data.sigInfo.Ignored = v
 		case "SigCgt":
+			if staticOnly {
+				continue
+			}
 			if len(value) > 16 {
 				value = value[len(value)-16:]
 			}
 			v, err := strconv.ParseUint(value, 16, 64)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			p.sigInfo.Caught = v
+			data.sigInfo.Caught = v
 		}
-
 	}
+	return data, nil
+}
+
+func (p *Process) fillFromStatusStaticWithContext(ctx context.Context) error {
+	p.statusMutex.RLock()
+	if p.statusMetaFilled {
+		p.statusMutex.RUnlock()
+		return nil
+	}
+	p.statusMutex.RUnlock()
+
+	data, err := p.readStatusWithContext(ctx, true)
+	if err != nil {
+		return err
+	}
+
+	p.statusMutex.Lock()
+	if !p.statusMetaFilled {
+		p.name = data.name
+		p.tgid = data.tgid
+		p.uids = data.uids
+		p.gids = data.gids
+		p.groups = data.groups
+		p.statusMetaFilled = true
+	}
+	p.statusMutex.Unlock()
 	return nil
 }
 
