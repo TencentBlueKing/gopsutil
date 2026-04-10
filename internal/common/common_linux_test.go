@@ -32,7 +32,7 @@ func TestBootTimeWithContextCachesByHostProc(t *testing.T) {
 
 	writeStat := func(dir string, btime uint64) {
 		content := fmt.Sprintf("cpu 1 2 3 4 5 6 7 8 9 10\nbtime %d\n", btime)
-		if err := os.WriteFile(filepath.Join(dir, "stat"), []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "stat"), []byte(content), 0o600); err != nil {
 			t.Fatalf("WriteFile stat failed: %v", err)
 		}
 	}

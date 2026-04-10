@@ -188,7 +188,7 @@ func TestCmdlineCachesResult(t *testing.T) {
 	if err := os.MkdirAll(pidDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll failed: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(pidDir, "cmdline"), []byte("/usr/bin/server\x00--flag\x00"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(pidDir, "cmdline"), []byte("/usr/bin/server\x00--flag\x00"), 0o600); err != nil {
 		t.Fatalf("WriteFile cmdline failed: %v", err)
 	}
 	p := &Process{Pid: 1060}
@@ -246,7 +246,7 @@ func TestCmdlineCacheConcurrentAccess(t *testing.T) {
 	if err := os.MkdirAll(pidDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll failed: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(pidDir, "cmdline"), []byte("/usr/bin/server\x00--flag\x00"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(pidDir, "cmdline"), []byte("/usr/bin/server\x00--flag\x00"), 0o600); err != nil {
 		t.Fatalf("WriteFile cmdline failed: %v", err)
 	}
 	p := &Process{Pid: 1060}
