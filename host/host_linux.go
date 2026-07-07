@@ -248,6 +248,12 @@ func PlatformInformationWithContext(ctx context.Context) (platform string, famil
 			version = getRedhatishVersion(contents)
 			platform = getRedhatishPlatform(contents)
 		}
+	} else if common.PathExists(common.HostEtcWithContext(ctx, "tencentos-release")) {
+		contents, err := common.ReadLines(common.HostEtcWithContext(ctx, "tencentos-release"))
+		if err == nil {
+			version = getRedhatishVersion(contents)
+			platform = getRedhatishPlatform(contents)
+		}
 	} else if common.PathExists(common.HostEtcWithContext(ctx, "system-release")) {
 		contents, err := common.ReadLines(common.HostEtcWithContext(ctx, "system-release"))
 		if err == nil {
