@@ -242,16 +242,16 @@ func PlatformInformationWithContext(ctx context.Context) (platform string, famil
 			platform = getRedFlagPlatform(contents)
 		}
 
-	} else if common.PathExists(common.HostEtcWithContext(ctx, "redhat-release")) {
-		contents, err := common.ReadLines(common.HostEtcWithContext(ctx, "redhat-release"))
-		if err == nil {
-			version = getRedhatishVersion(contents)
-			platform = getRedhatishPlatform(contents)
-		}
 	} else if common.PathExists(common.HostEtcWithContext(ctx, "tencentos-release")) {
 		contents, err := common.ReadLines(common.HostEtcWithContext(ctx, "tencentos-release"))
 		if err == nil {
 			version = getTencentOSVersion(contents)
+			platform = getRedhatishPlatform(contents)
+		}
+	} else if common.PathExists(common.HostEtcWithContext(ctx, "redhat-release")) {
+		contents, err := common.ReadLines(common.HostEtcWithContext(ctx, "redhat-release"))
+		if err == nil {
+			version = getRedhatishVersion(contents)
 			platform = getRedhatishPlatform(contents)
 		}
 	} else if common.PathExists(common.HostEtcWithContext(ctx, "system-release")) {
