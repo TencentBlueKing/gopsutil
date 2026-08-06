@@ -251,7 +251,7 @@ func PlatformInformationWithContext(ctx context.Context) (platform string, famil
 	} else if common.PathExists(common.HostEtcWithContext(ctx, "tencentos-release")) {
 		contents, err := common.ReadLines(common.HostEtcWithContext(ctx, "tencentos-release"))
 		if err == nil {
-			version = getRedhatishVersion(contents)
+			version = getTencentOSVersion(contents)
 			platform = getRedhatishPlatform(contents)
 		}
 	} else if common.PathExists(common.HostEtcWithContext(ctx, "system-release")) {
@@ -399,6 +399,15 @@ func getRedhatishVersion(contents []string) string {
 		return matches[1]
 	}
 	return ""
+}
+
+func getTencentOSVersion(contents []string) string {
+	c := strings.ToLower(strings.Join(contents, ""))
+	if matches := regexp.MustCompile(`tencent(?: linux release|os server)\s+([\d.]+)`).FindStringSubmatch(c); matches != nil {
+		return matches[1]
+	}
+
+	return getRedhatishVersion(contents)
 }
 
 func getRedhatishPlatform(contents []string) string {
