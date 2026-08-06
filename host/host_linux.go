@@ -402,15 +402,12 @@ func getRedhatishVersion(contents []string) string {
 }
 
 func getTencentOSVersion(contents []string) string {
-	if version := getRedhatishVersion(contents); version != "" {
-		return version
-	}
-
 	c := strings.ToLower(strings.Join(contents, ""))
-	if matches := regexp.MustCompile(`tencentos server\s+([\d.]+)`).FindStringSubmatch(c); matches != nil {
+	if matches := regexp.MustCompile(`tencent(?: linux release|os server)\s+([\d.]+)`).FindStringSubmatch(c); matches != nil {
 		return matches[1]
 	}
-	return ""
+
+	return getRedhatishVersion(contents)
 }
 
 func getRedhatishPlatform(contents []string) string {
