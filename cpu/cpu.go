@@ -121,7 +121,7 @@ func calculateBusy(t1, t2 TimesStat) (float64, error) {
 	t1All, t1Busy, t1Idle := getAllBusy(t1)
 	t2All, t2Busy, t2Idle := getAllBusy(t2)
 
-	if t2All <= t1All {
+	if t2All < t1All {
 		return 0, fmt.Errorf(
 			"%w: cpu=%s, all=%f -> %f",
 			ErrCPUTimesCounterRollback, t2.CPU, t1All, t2All,
@@ -142,7 +142,7 @@ func calculateBusy(t1, t2 TimesStat) (float64, error) {
 		)
 	}
 
-	if t2Busy == t1Busy {
+	if t2All == t1All || t2Busy == t1Busy {
 		return 0, nil
 	}
 

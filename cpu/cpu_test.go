@@ -279,6 +279,22 @@ func TestCalculateBusy(t *testing.T) {
 		assert.NoError(t, err)
 		assert.InDelta(t, 1.0, usage, 0.000001)
 	})
+
+	t.Run("unchanged sample is valid zero usage", func(t *testing.T) {
+		previous := TimesStat{
+			CPU:    "cpu0",
+			User:   100,
+			System: 50,
+			Idle:   850,
+			Iowait: 10,
+		}
+		current := previous
+
+		usage, err := calculateBusy(previous, current)
+
+		assert.NoError(t, err)
+		assert.Equal(t, 0.0, usage)
+	})
 }
 
 func TestCalculateAllBusyPropagatesIdleCounterRollback(t *testing.T) {
@@ -296,6 +312,41 @@ func TestCalculateAllBusyPropagatesIdleCounterRollback(t *testing.T) {
 	if !errors.Is(err, ErrCPUTimesCounterRollback) {
 		t.Fatalf("expected ErrCPUTimesCounterRollback, got %v", err)
 	}
+}
+
+func TestCalculateAllBusyAllowsUnchangedCPU(t *testing.T) {
+	previous := []TimesStat{
+		{
+			CPU:  "cpu0",
+			User: 100,
+			Idle: 900,
+		},
+		{
+			CPU:  "cpu1",
+			User: 100,
+			Idle: 900,
+		},
+	}
+
+	current := []TimesStat{
+		{
+			CPU:  "cpu0",
+			User: 100,
+			Idle: 900,
+		},
+		{
+			CPU:  "cpu1",
+			User: 110,
+			Idle: 990,
+		},
+	}
+
+	usage, err := calculateAllBusy(previous, current)
+
+	assert.NoError(t, err)
+	assert.Len(t, usage, 2)
+	assert.Equal(t, 0.0, usage[0])
+	assert.InDelta(t, 10.0, usage[1], 0.000001)
 }
 
 func TestCPUPercent(t *testing.T) {
