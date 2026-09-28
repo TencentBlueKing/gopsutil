@@ -3,6 +3,7 @@ package cpu
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"runtime"
@@ -53,8 +54,9 @@ type lastPercent struct {
 }
 
 var (
-	lastCPUPercent lastPercent
-	invoke         common.Invoker = common.Invoke{}
+	lastCPUPercent             lastPercent
+	invoke                     common.Invoker = common.Invoke{}
+	ErrCPUTimesCounterRollback                = errors.New("cpu times counter rollback")
 )
 
 func init() {
@@ -101,8 +103,10 @@ func (c InfoStat) String() string {
 	return string(s)
 }
 
-func getAllBusy(t TimesStat) (float64, float64) {
+func getAllBusy(t TimesStat) (float64, float64, float64) {
 	tot := t.Total()
+	idle := t.Idle
+
 	if runtime.GOOS == "linux" {
 		tot -= t.Guest     // Linux 2.6.24+
 		tot -= t.GuestNice // Linux 3.2.0+
@@ -110,20 +114,39 @@ func getAllBusy(t TimesStat) (float64, float64) {
 
 	busy := tot - t.Idle - t.Iowait
 
-	return tot, busy
+	return tot, busy, idle
 }
 
-func calculateBusy(t1, t2 TimesStat) float64 {
-	t1All, t1Busy := getAllBusy(t1)
-	t2All, t2Busy := getAllBusy(t2)
+func calculateBusy(t1, t2 TimesStat) (float64, error) {
+	t1All, t1Busy, t1Idle := getAllBusy(t1)
+	t2All, t2Busy, t2Idle := getAllBusy(t2)
 
-	if t2Busy <= t1Busy {
-		return 0
+	if t2All < t1All {
+		return 0, fmt.Errorf(
+			"%w: cpu=%s, all=%f -> %f",
+			ErrCPUTimesCounterRollback, t2.CPU, t1All, t2All,
+		)
 	}
-	if t2All <= t1All {
-		return 100
+
+	if t2Idle < t1Idle {
+		return 0, fmt.Errorf(
+			"%w: cpu=%s, idle=%f -> %f",
+			ErrCPUTimesCounterRollback, t2.CPU, t1Idle, t2Idle,
+		)
 	}
-	return math.Min(100, math.Max(0, (t2Busy-t1Busy)/(t2All-t1All)*100))
+
+	if t2Busy < t1Busy {
+		return 0, fmt.Errorf(
+			"%w: cpu=%s, busy=%f -> %f",
+			ErrCPUTimesCounterRollback, t2.CPU, t1Busy, t2Busy,
+		)
+	}
+
+	if t2All == t1All || t2Busy == t1Busy {
+		return 0, nil
+	}
+
+	return math.Min(100, math.Max(0, (t2Busy-t1Busy)/(t2All-t1All)*100)), nil
 }
 
 func calculateAllBusy(t1, t2 []TimesStat) ([]float64, error) {
@@ -136,9 +159,16 @@ func calculateAllBusy(t1, t2 []TimesStat) ([]float64, error) {
 	}
 
 	ret := make([]float64, len(t1))
-	for i, t := range t2 {
-		ret[i] = calculateBusy(t1[i], t)
+
+	for i, current := range t2 {
+		usage, err := calculateBusy(t1[i], current)
+		if err != nil {
+			// 任意 CPU 核出现 idle 回退，判定无效然后返回
+			return nil, err
+		}
+		ret[i] = usage
 	}
+
 	return ret, nil
 }
 
